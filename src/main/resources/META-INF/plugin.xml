@@ -1,0 +1,31 @@
+<idea-plugin>
+    <id>ru.student.classdiagrams</id>
+    <name>Class Diagrams for OpenIDE</name>
+    <version>1.1.0</version>
+    <vendor>Local Tools</vendor>
+    <description><![CDATA[
+        Interactive UML class diagrams for selected Java classes and packages.
+        Fields, methods, inheritance, interfaces, associations and dependencies.
+        Automatic layout, obstacle-aware arrows, editable connection points and waypoints.
+        Dragging, zoom, source navigation, SVG, PNG and PlantUML export.
+        Runs locally without Graphviz or web services.
+    ]]></description>
+    <idea-version since-build="262" until-build="262.*"/>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Class Diagrams" anchor="right" icon="/icons/diagram.svg"
+                    factoryClass="ru.student.diagram.ide.DiagramToolWindowFactory"
+                    canCloseContents="true"/>
+    </extensions>
+    <actions>
+        <action id="LocalClassDiagrams.Show" class="ru.student.diagram.ide.ShowDiagramAction"
+                text="Построить UML-диаграмму классов"
+                description="Построить диаграмму по выбранным Java-классам или папкам"
+                icon="/icons/diagram.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

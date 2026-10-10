@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Plugin SDK: песочница для runIde и локальные дистрибутивы
+sandbox/
+dist/
+
+# Логи и временные файлы
+*.log
+logs/
+*.hprof
+hs_err_pid*.log
+
+# Java
+*.class
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Локальные настройки
+local.properties
