@@ -29,3 +29,10 @@ Thumbs.db
 
 # Локальные настройки
 local.properties
+
+# Локальная среда и записи профилировщика
+.env
+.env.*
+!.env.example
+*.jfr
+*.tmp

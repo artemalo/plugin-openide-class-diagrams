@@ -7,6 +7,11 @@ $taskDistribution = Join-Path $taskProject 'dist'
 $taskJava = Join-Path $IdeHome 'jbr\bin\java.exe'
 $taskJavac = Join-Path $IdeHome 'jbr\bin\javac.exe'
 if (-not (Test-Path -LiteralPath $taskJavac)) { throw 'Не найден компилятор в указанной папке OpenIDE.' }
+# Clean only generated classes; old release ZIPs in dist are never touched here.
+$taskResolvedClasses = [IO.Path]::GetFullPath($taskClasses)
+$taskBuildPrefix = [IO.Path]::GetFullPath($taskBuild) + [IO.Path]::DirectorySeparatorChar
+if (-not $taskResolvedClasses.StartsWith($taskBuildPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe generated class path' }
+if (Test-Path -LiteralPath $taskResolvedClasses) { Remove-Item -LiteralPath $taskResolvedClasses -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $taskClasses,$taskDistribution | Out-Null
 $taskJarRoots = @((Join-Path $IdeHome 'lib'), (Join-Path $IdeHome 'plugins\java\lib'), (Join-Path $IdeHome 'plugins\java\lib\modules'))
 $taskClasspath = (($taskJarRoots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter '*.jar' -File } | Select-Object -ExpandProperty FullName) -join ';')
@@ -18,6 +23,9 @@ $taskArgFile = Join-Path $taskBuild 'compiler.args'
 & $taskJavac ('@' + $taskArgFile)
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
 Copy-Item -Path (Join-Path $taskProject 'src\main\resources\*') -Destination $taskClasses -Recurse -Force
+if (Test-Path -LiteralPath (Join-Path $taskProject 'LICENSE')) {
+    Copy-Item -LiteralPath (Join-Path $taskProject 'LICENSE') -Destination (Join-Path $taskClasses 'META-INF/LICENSE') -Force
+}
 $taskPluginRoot = Join-Path $taskBuild 'package\class-diagrams'
 $taskLib = Join-Path $taskPluginRoot 'lib'
 New-Item -ItemType Directory -Force -Path $taskLib | Out-Null

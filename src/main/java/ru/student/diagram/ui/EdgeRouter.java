@@ -29,7 +29,7 @@ public final class EdgeRouter {
         }
     }
     public record Route(List<Point2D.Double> points, boolean obstructed) {}
-    private record Port(Point2D.Double point, Point2D.Double stub, int axis) {}
+    private record Port(Point2D.Double point, Point2D.Double stub, int direction) {} // 0:any, 1:right, 2:down, 3:left, 4:up
 
     public static Route route(Map<String, ? extends Rectangle2D> cards, String source, String target,
                               double sourceSlot, double targetSlot, Anchor from, Anchor to,
@@ -63,7 +63,7 @@ public final class EdgeRouter {
             Point2D.Double stub=p(point.x,point.y);
             switch(side){case TOP->stub.y-=LEAD;case BOTTOM->stub.y+=LEAD;case LEFT->stub.x-=LEAD;case RIGHT->stub.x+=LEAD;}
             boolean blocked=cards.entrySet().stream().anyMatch(e->!e.getKey().equals(id)&&crosses(point,stub,e.getValue()));
-            if(!blocked)result.add(new Port(point,stub,side==Side.TOP||side==Side.BOTTOM?2:1));
+            if(!blocked)result.add(new Port(point,stub,switch(side){case TOP->4;case RIGHT->1;case BOTTOM->2;case LEFT->3;}));
         }
         return result;
     }
@@ -139,12 +139,12 @@ public final class EdgeRouter {
         List<Point2D.Double> find(List<Port> starts,List<Port> ends) {
             List<Port> goals=ends.stream().filter(port->!blocked[node(port.stub)]).toList();
             if(goals.isEmpty()||starts.isEmpty())return List.of();
-            int size=width*height*3;
+            int size=width*height*5;
             double[] distances=new double[size];Arrays.fill(distances,Double.POSITIVE_INFINITY);
             int[] previous=new int[size],origin=new int[size];Arrays.fill(previous,-1);Arrays.fill(origin,-1);
             PriorityQueue<Visit> queue=new PriorityQueue<>(Comparator.comparingDouble(Visit::score).thenComparingInt(Visit::state));
             for(int i=0;i<starts.size();i++) {
-                Port port=starts.get(i);int node=node(port.stub),state=node*3+port.axis;
+                Port port=starts.get(i);int node=node(port.stub),state=node*5+port.direction;
                 if(blocked[node])continue;
                 double cost=port.point.distance(port.stub);
                 if(cost<distances[state]){distances[state]=cost;origin[state]=i;queue.add(new Visit(state,cost,cost+heuristic(port.stub,goals)));}
@@ -152,12 +152,15 @@ public final class EdgeRouter {
             double best=Double.POSITIVE_INFINITY;int bestState=-1;Port bestEnd=null;
             int visited=0;
             while(!queue.isEmpty()&&visited++<180_000) {
-                Visit visit=queue.remove();int state=visit.state,node=state/3,axis=state%3;
+                Visit visit=queue.remove();int state=visit.state,node=state/5,direction=state%5;
                 if(visit.distance>distances[state]+EPS)continue;
                 if(visit.score>=best)break;
                 Point2D.Double point=point(node);
                 for(Port goal:goals) if(point.distance(goal.stub)<EPS) {
-                    double score=visit.distance+goal.stub.distance(goal.point)+(axis!=0&&goal.axis!=0&&axis!=goal.axis?BEND_COST:0);
+                    // An arrow must enter the target, never double back over its final lead.
+                    if(direction!=0&&direction==goal.direction)continue;
+                    double score=visit.distance+goal.stub.distance(goal.point)
+                            +(direction!=0&&goal.direction!=0&&direction!=opposite(goal.direction)?BEND_COST:0);
                     if(score<best){best=score;bestState=state;bestEnd=goal;}
                 }
                 int x=node%width,y=node/width;
@@ -165,9 +168,11 @@ public final class EdgeRouter {
                         y>0&&!vertical[node-width]?node-width:-1,y+1<height&&!vertical[node]?node+width:-1};
                 for(int i=0;i<neighbors.length;i++) {
                     int neighbor=neighbors[i];if(neighbor<0||blocked[neighbor])continue;
-                    int direction=i<2?1:2,next=neighbor*3+direction;
+                    int nextDirection=switch(i){case 0->3;case 1->1;case 2->4;default->2;};
+                    if(previous[state]<0&&direction!=0&&nextDirection==opposite(direction))continue;
+                    int next=neighbor*5+nextDirection;
                     Point2D.Double nextPoint=point(neighbor);
-                    double distance=visit.distance+point.distance(nextPoint)+(axis!=0&&axis!=direction?BEND_COST:0);
+                    double distance=visit.distance+point.distance(nextPoint)+(direction!=0&&direction!=nextDirection?BEND_COST:0);
                     if(distance+EPS<distances[next]) {
                         distances[next]=distance;previous[next]=state;origin[next]=origin[state];
                         queue.add(new Visit(next,distance,distance+heuristic(nextPoint,goals)));
@@ -176,10 +181,11 @@ public final class EdgeRouter {
             }
             if(bestState<0)return List.of();
             List<Point2D.Double> path=new ArrayList<>();path.add(bestEnd.point);
-            int state=bestState;while(state>=0){path.add(point(state/3));state=previous[state];}
+            int state=bestState;while(state>=0){path.add(point(state/5));state=previous[state];}
             path.add(starts.get(origin[bestState]).point);Collections.reverse(path);return simplify(path);
         }
         private int node(Point2D.Double point){return Arrays.binarySearch(ys,point.y)*width+Arrays.binarySearch(xs,point.x);}
+        private static int opposite(int direction){return direction==0?0:(direction+1)%4+1;}
         private Point2D.Double point(int node){return p(xs[node%width],ys[node/width]);}
         private static double heuristic(Point2D.Double point,List<Port> goals) {
             double value=Double.POSITIVE_INFINITY;

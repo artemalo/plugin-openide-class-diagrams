@@ -31,6 +31,14 @@ public final class ArrowTests {
         for(var box:boxes)for(int i=1;i<path.size();i++)if(EdgeRouter.crosses(path.get(i-1),path.get(i),box))return false;
         return true;
     }
+    private static boolean noRetracedSegments(List<Point2D.Double> path) {
+        for(int i=2;i<path.size();i++) {
+            var a=path.get(i-2);var b=path.get(i-1);var c=path.get(i);
+            if(Math.abs((b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x))<0.001
+                    &&(b.x-a.x)*(c.x-b.x)+(b.y-a.y)*(c.y-b.y)<0)return false;
+        }
+        return true;
+    }
     private static double distanceTo(List<Point2D.Double> path,Point2D p) {
         double distance=Double.POSITIVE_INFINITY;
         for(int i=1;i<path.size();i++)distance=Math.min(distance,new Line2D.Double(path.get(i-1),path.get(i)).ptSegDist(p));
@@ -88,9 +96,9 @@ public final class ArrowTests {
             Map<String,Rectangle2D.Double> scene=new LinkedHashMap<>();scene.put("A",r(-180,120,110,80));scene.put("B",r(920,650,110,80));
             for(int row=0;row<4;row++)for(int column=0;column<5;column++)
                 scene.put(row+"-"+column,r(column*170+random.nextInt(35),row*200+random.nextInt(35),100,110));
-            var result=route(scene);allClear&=!result.obstructed()&&orthogonal(result.points())&&clear(result.points(),scene.values());
+            var result=route(scene);allClear&=!result.obstructed()&&orthogonal(result.points())&&clear(result.points(),scene.values())&&noRetracedSegments(result.points());
         }
-        check(allClear,"30 obstacle arrangements have no card crossings or diagonal segments");
+        check(allClear,"30 obstacle arrangements have no card crossings, diagonal segments or endpoint backtracking");
         Files.writeString(out.resolve("routing-performance.txt"),"30 scenes / 22 cards: "+(System.nanoTime()-started)/1_000_000+" ms\n");
         SwingUtilities.invokeAndWait(()->{
             try {
@@ -99,8 +107,10 @@ public final class ArrowTests {
                 DiagramCanvas canvas=new DiagramCanvas();canvas.setSize(1500,1000);canvas.setModel(model);
                 // Label rendering must also work for a route containing exactly two endpoints.
                 check(canvas.edgePoints(edge).size()==2&&canvas.toSvg().contains("items")&&canvas.toImage().getWidth()>0,"straight arrow label exports without exception");
+                Rectangle2D destination=canvas.nodeBounds("B");
+                drag(canvas,p(destination.getCenterX(),destination.getY()+22),p(1040,82));
                 Rectangle2D obstacle=canvas.nodeBounds("C");
-                drag(canvas,p(obstacle.getCenterX(),obstacle.getY()+22),p(390,130));
+                drag(canvas,p(obstacle.getCenterX(),obstacle.getY()+22),p(620,100));
                 check(clear(canvas.edgePoints(edge),List.of((Rectangle2D.Double)canvas.nodeBounds("C"))),"dragging unrelated card reroutes cached arrow");
                 ImageIO.write(canvas.toImage(),"png",out.resolve("arrows-auto.png").toFile());
                 Files.writeString(out.resolve("arrows-auto.svg"),canvas.toSvg());
@@ -126,6 +136,7 @@ public final class ArrowTests {
                 drag(canvas,p(source.getCenterX(),source.getY()+30),p(source.getCenterX()+80,source.getY()+120));
                 var moved=canvas.nodeBounds("A");
                 check(Math.abs(canvas.edgePoints(edge).get(0).y-moved.getY())<0.01&&canvas.waypoints(edge).get(0).equals(storedPin),"moving class keeps endpoint attached and manual point fixed");
+                check(noRetracedSegments(canvas.edgePoints(edge)),"manual endpoint leads do not double back over themselves");
                 canvas.setOptions(false,false,false,false,false);canvas.setOptions(true,true,false,false,true);
                 check(canvas.nodeBounds("A").equals(moved)&&canvas.waypoints(edge).size()==1,"filters preserve manual position and arrow controls");
                 canvas.setModel(model);
