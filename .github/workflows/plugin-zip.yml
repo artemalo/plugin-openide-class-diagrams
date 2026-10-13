@@ -1,0 +1,75 @@
+name: Plugin ZIP after merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-zip:
+    if: github.event.pull_request.merged == true
+    name: Build installable plugin ZIP
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Restore OpenIDE compile SDK
+        id: openide-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openide-sdk
+          key: openide-262.10968.63.1-win-x64-jars-v1
+      - name: Download OpenIDE compile SDK
+        if: steps.openide-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $taskBuild = '262.10968.63.1'
+          $taskArchive = Join-Path $env:RUNNER_TEMP "openIDE-$taskBuild.win.zip"
+          $taskUnpacked = Join-Path $env:RUNNER_TEMP 'openide-unpacked'
+          $taskSdk = Join-Path $env:RUNNER_TEMP 'openide-sdk'
+          Invoke-WebRequest -Uri "https://download.openide.ru/$taskBuild/openIDE-$taskBuild.win.zip" -OutFile $taskArchive
+          Expand-Archive -LiteralPath $taskArchive -DestinationPath $taskUnpacked
+          $taskIdeHome = Get-ChildItem -LiteralPath $taskUnpacked -Directory -Recurse |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'plugins\java\lib\modules') } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $taskIdeHome) { throw 'OpenIDE SDK was not found in the downloaded archive' }
+          foreach ($taskRelative in @('lib', 'plugins\java\lib', 'plugins\java\lib\modules')) {
+            $taskSource = Join-Path $taskIdeHome $taskRelative
+            $taskTarget = Join-Path $taskSdk $taskRelative
+            New-Item -ItemType Directory -Force -Path $taskTarget | Out-Null
+            Get-ChildItem -LiteralPath $taskSource -Filter '*.jar' -File |
+              Copy-Item -Destination $taskTarget
+          }
+          Remove-Item -LiteralPath $taskArchive
+          $taskTempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP) + [IO.Path]::DirectorySeparatorChar
+          $taskExpanded = [IO.Path]::GetFullPath($taskUnpacked)
+          if (-not $taskExpanded.StartsWith($taskTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Unsafe OpenIDE extraction path'
+          }
+          Remove-Item -LiteralPath $taskExpanded -Recurse -Force
+      - name: Build and test plugin ZIP
+        shell: pwsh
+        run: |
+          $taskSdk = Join-Path $env:RUNNER_TEMP 'openide-sdk'
+          & ./gradlew.bat build ("-PopenideHome=$taskSdk") --no-daemon
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload installable ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: class-diagrams-${{ github.run_id }}
+          path: build/distributions/class-diagrams-*-local.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

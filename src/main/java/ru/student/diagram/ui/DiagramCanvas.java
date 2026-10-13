@@ -39,12 +39,16 @@ public final class DiagramCanvas extends JComponent {
     private double zoom = 1, panX = 0, panY = 0;
     private Point lastMouse;
     private String dragging;
+    private Point2D.Double dragOrigin;
+    private Double guideX, guideY;
     private BiConsumer<String, Integer> navigate = (path, offset) -> {};
     private Runnable changed = () -> {};
     private static final Font TEXT = new Font("Dialog", Font.PLAIN, 12);
     private static final Font TITLE = new Font("Dialog", Font.BOLD, 15);
     private static final Font META = new Font("Dialog", Font.PLAIN, 11);
     private static final int HEADER = 69, ROW = 21;
+    private static final int SNAP_PIXELS = 8;
+    private record AxisSnap(double offset, double guide) {}
 
     public DiagramCanvas() {
         setOpaque(true); setFocusable(true); setPreferredSize(new Dimension(1050, 720));
@@ -56,6 +60,7 @@ public final class DiagramCanvas extends JComponent {
                 lastMouse = e.getPoint(); pressPoint = e.getPoint();
                 panning = SwingUtilities.isMiddleMouseButton(e);
                 dragging = null; draggingHandle = null; draggingEdge = false;
+                dragOrigin = null; guideX = null; guideY = null;
                 if (panning) return;
                 Handle handle = hitHandle(world);
                 if (handle != null) {
@@ -66,6 +71,10 @@ public final class DiagramCanvas extends JComponent {
                     selectedEdge = selected == null ? hitEdge(world) : null;
                     if (SwingUtilities.isLeftMouseButton(e)) {
                         dragging = selected;
+                        if (dragging != null) {
+                            Rectangle2D.Double r = positions.get(dragging);
+                            dragOrigin = new Point2D.Double(r.x, r.y);
+                        }
                         draggingEdge = selectedEdge != null;
                         panning = selected == null && selectedEdge == null;
                         Handle newlySelectedHandle = hitHandle(world);
@@ -80,7 +89,9 @@ public final class DiagramCanvas extends JComponent {
             }
             @Override public void mouseReleased(MouseEvent e) {
                 if (e.isPopupTrigger() && !SwingUtilities.isRightMouseButton(e)) popup(e);
-                lastMouse = null; dragging = null; draggingHandle = null; draggingEdge = false; panning = false;
+                lastMouse = null; dragging = null; dragOrigin = null; draggingHandle = null;
+                draggingEdge = false; panning = false; guideX = null; guideY = null;
+                repaint();
             }
             @Override public void mouseDragged(MouseEvent e) {
                 if (lastMouse == null) return;
@@ -102,7 +113,15 @@ public final class DiagramCanvas extends JComponent {
                 } else if (dragging != null) {
                     hasManualArrangement = true;
                     Rectangle2D.Double r = positions.get(dragging);
-                    r.x += dx / zoom; r.y += dy / zoom;
+                    r.x = dragOrigin.x + (e.getX() - pressPoint.x) / zoom;
+                    r.y = dragOrigin.y + (e.getY() - pressPoint.y) / zoom;
+                    guideX = null; guideY = null;
+                    if (e.isShiftDown()) {
+                        AxisSnap x = snapAxis(r, true);
+                        AxisSnap y = snapAxis(r, false);
+                        if (x != null) { r.x += x.offset(); guideX = x.guide(); }
+                        if (y != null) { r.y += y.offset(); guideY = y.guide(); }
+                    }
                     invalidateRoutes();
                 } else if (panning) { panX += dx; panY += dy; }
                 lastMouse = e.getPoint(); repaint(); changed.run();
@@ -170,10 +189,10 @@ public final class DiagramCanvas extends JComponent {
         edits.remove(selectedEdge); selectedPoint = -1; invalidateRoutes(); repaint(); changed.run();
     }
     public String interactionHint() {
-        if (selectedEdge == null) return "Стрелка: щелчок и перетаскивание линии — изменить маршрут";
+        if (selectedEdge == null) return "Перетащите линию стрелки, чтобы изменить маршрут.";
         String mode = edits.containsKey(selectedEdge) ? "ручной маршрут" : "автоматический маршрут";
-        String obstruction = edgeRoute(selectedEdge).obstructed() ? " · уберите точку из карточки или раздвиньте классы" : "";
-        return "Стрелка: " + mode + " · R — сброс · Delete — убрать точку / сбросить маршрут" + obstruction;
+        String obstruction = edgeRoute(selectedEdge).obstructed() ? " Уберите точку из карточки или раздвиньте классы." : "";
+        return "Стрелка: " + mode + ". R: сброс; Delete: удалить точку или сбросить маршрут." + obstruction;
     }
     public void zoomIn() { scale(1.2, new Point(getWidth() / 2, getHeight() / 2)); }
     public void zoomOut() { scale(1 / 1.2, new Point(getWidth() / 2, getHeight() / 2)); }
@@ -242,6 +261,28 @@ public final class DiagramCanvas extends JComponent {
         repaint(); changed.run();
     }
     private Point2D world(Point p) { return new Point2D.Double((p.x - panX) / zoom, (p.y - panY) / zoom); }
+    private AxisSnap snapAxis(Rectangle2D.Double moving, boolean horizontal) {
+        double start = horizontal ? moving.x : moving.y;
+        double size = horizontal ? moving.width : moving.height;
+        double[] movingAnchors = {start, start + size / 2, start + size};
+        double best = SNAP_PIXELS / zoom;
+        AxisSnap result = null;
+        for (String id : cards.keySet()) {
+            if (id.equals(dragging)) continue;
+            Rectangle2D.Double other = positions.get(id);
+            double otherStart = horizontal ? other.x : other.y;
+            double otherSize = horizontal ? other.width : other.height;
+            double[] otherAnchors = {otherStart, otherStart + otherSize / 2, otherStart + otherSize};
+            for (double movingAnchor : movingAnchors) for (double otherAnchor : otherAnchors) {
+                double offset = otherAnchor - movingAnchor;
+                if (Math.abs(offset) <= best) {
+                    best = Math.abs(offset);
+                    result = new AxisSnap(offset, otherAnchor);
+                }
+            }
+        }
+        return result;
+    }
     private String hit(Point2D point) {
         List<String> ids = new ArrayList<>(cards.keySet()); Collections.reverse(ids);
         for (String id : ids) if (positions.get(id).contains(point)) return id;
@@ -290,8 +331,8 @@ public final class DiagramCanvas extends JComponent {
         String id = hit(world(e.getPoint()));
         if (id == null) {
             var edge = hitEdge(world(e.getPoint()));
-            return edge == null ? "Колесо: масштаб · фон: перемещение · двойной щелчок: исходник"
-                    : "Стрелка: перетащите линию или двойным щелчком добавьте точку. Концы крепятся к границам классов. R — автомаршрут.";
+            return edge == null ? "Колесо мыши: масштаб; перетаскивание фона: перемещение; двойной щелчок по классу: исходник."
+                    : "Перетащите линию стрелки, чтобы изменить маршрут. Двойной щелчок добавляет точку. Концы крепятся к границам классов. R сбрасывает маршрут.";
         }
         Card card = cards.get(id);
         return "<html><b>" + xml(card.node().id()) + "</b><br>"
@@ -309,8 +350,19 @@ public final class DiagramCanvas extends JComponent {
     }
     private void paintGraph(Graphics2D g, boolean darkMode, boolean interactive) {
         for (var edge : visible.edges()) paintEdge(g, edge, darkMode, interactive);
+        if (interactive && dragging != null) paintGuides(g, darkMode);
         for (var entry : cards.entrySet()) paintCard(g, entry.getValue(), positions.get(entry.getKey()), darkMode, interactive);
         if (interactive) paintHandles(g, darkMode);
+    }
+    private void paintGuides(Graphics2D g, boolean darkMode) {
+        if (guideX == null && guideY == null) return;
+        g.setColor(darkMode ? new Color(0x81c7ff) : new Color(0x2274c9));
+        g.setStroke(new BasicStroke((float) (1 / zoom), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER,
+                10, new float[] {(float) (5 / zoom), (float) (4 / zoom)}, 0));
+        double left = -panX / zoom, right = (getWidth() - panX) / zoom;
+        double top = -panY / zoom, bottom = (getHeight() - panY) / zoom;
+        if (guideX != null) g.draw(new Line2D.Double(guideX, top, guideX, bottom));
+        if (guideY != null) g.draw(new Line2D.Double(left, guideY, right, guideY));
     }
     private void paintCard(Graphics2D g, Card card, Rectangle2D.Double r, boolean darkMode, boolean interactive) {
         Color accent = accent(card.node().kind());
@@ -329,7 +381,7 @@ public final class DiagramCanvas extends JComponent {
         g.setFont(card.node().isAbstract() ? TITLE.deriveFont(Font.BOLD | Font.ITALIC) : TITLE);
         g.drawString(elide(card.node().name(), g.getFontMetrics(), r.width - 62), (float) r.x + 49, (float) r.y + 28);
         g.setFont(META); g.setColor(muted(darkMode));
-        String tag = card.node().kind() + (card.node().selected() ? "" : " · связанный");
+        String tag = card.node().kind() + (card.node().selected() ? "" : " (связанный)");
         g.drawString(tag, (float) r.x + 49, (float) r.y + 44);
         g.drawString(elide(card.node().packageName(), g.getFontMetrics(), r.width - 28), (float) r.x + 14, (float) r.y + 60);
         double y = r.y + HEADER;
@@ -552,8 +604,8 @@ public final class DiagramCanvas extends JComponent {
     private static String points(List<Point2D.Double> points) {StringBuilder b=new StringBuilder();for(var p:points)b.append(p.x).append(',').append(p.y).append(' ');return b.toString();}
     private static String elide(String text,FontMetrics metrics,double width) {
         if(metrics.stringWidth(text)<=width)return text;
-        int length=text.length();while(length>0&&metrics.stringWidth(text.substring(0,length)+"…")>width)length--;
-        return text.substring(0,length)+"…";
+        int length=text.length();while(length>0&&metrics.stringWidth(text.substring(0,length)+"...")>width)length--;
+        return text.substring(0,length)+"...";
     }
     public static String xml(String s) {return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");}
     private static void hints(Graphics2D g) {g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,RenderingHints.VALUE_TEXT_ANTIALIAS_ON);}

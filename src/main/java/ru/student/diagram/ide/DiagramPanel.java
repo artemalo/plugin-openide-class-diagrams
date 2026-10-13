@@ -28,7 +28,7 @@ public final class DiagramPanel extends JPanel implements Disposable {
     private final Project project;
     private final PsiDiagramBuilder.Selection selection;
     private final DiagramCanvas canvas = new DiagramCanvas();
-    private final JLabel status = new JLabel("Анализ классов…");
+    private final JLabel status = new JLabel("Анализ классов...");
     private final JCheckBox fields = new JCheckBox("Поля", true), methods = new JCheckBox("Методы", true),
             publicOnly = new JCheckBox("Только public"), related = new JCheckBox("Связанные классы"),
             dependencies = new JCheckBox("Зависимости", true);
@@ -71,7 +71,7 @@ public final class DiagramPanel extends JPanel implements Disposable {
             public void changedUpdate(DocumentEvent e) { update(); }
             private void update() { canvas.search(search.getText()); }
         });
-        searchRow.add(search); searchRow.add(new JLabel("Колесо — масштаб · потяните стрелку — изменить маршрут"));
+        searchRow.add(search); searchRow.add(new JLabel("Колесо мыши меняет масштаб. Перетащите стрелку, чтобы изменить маршрут."));
         top.add(searchRow); add(top, BorderLayout.NORTH); add(canvas, BorderLayout.CENTER);
         addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override public void componentResized(java.awt.event.ComponentEvent e) { top.revalidate(); }
@@ -92,7 +92,7 @@ public final class DiagramPanel extends JPanel implements Disposable {
         if (disposed || project.isDisposed()) return;
         int request = ++generation;
         if (pending != null) pending.cancel();
-        loading = true; status.setText("Анализ классов… При индексации ожидаем её завершения.");
+        loading = true; status.setText("Анализ классов... Если IDE индексирует проект, построение начнётся после индексации.");
         pending = ReadAction.nonBlocking(() -> PsiDiagramBuilder.build(project, selection))
                 .inSmartMode(project).expireWith(this).expireWith(project)
                 .finishOnUiThread(ModalityState.any(), model -> {
@@ -110,10 +110,9 @@ public final class DiagramPanel extends JPanel implements Disposable {
     private void updateStatus() {
         if (loading) return;
         var model = canvas.visibleModel();
-        status.setText(model.nodes().size() + " классов · " + model.edges().size() + " связей · "
-                + Math.round(canvas.getZoom() * 100) + "%"
-                + "   |   " + canvas.interactionHint()
-                + (warning.isBlank() ? "" : "   |   " + warning));
+        status.setText(model.nodes().size() + " классов, " + model.edges().size() + " связей, "
+                + Math.round(canvas.getZoom() * 100) + "%. " + canvas.interactionHint()
+                + (warning.isBlank() ? "" : " " + warning));
     }
     private void exportMenu(JButton anchor) {
         JPopupMenu menu = new JPopupMenu();

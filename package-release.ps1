@@ -38,7 +38,8 @@ try {
 
 # Explicit allowlist: no SDK, local profile, lab project, .git directory or generated files.
 $taskInputs = @('src','docs','.github','README.md','CHANGELOG.md','RELEASING.md',
-    '.gitignore','.gitattributes','build.ps1','test.ps1','test-core.ps1','integration-test.ps1','package-release.ps1')
+    '.gitignore','.gitattributes','build.gradle','settings.gradle','gradle','gradlew','gradlew.bat',
+    'build.ps1','test.ps1','test-core.ps1','integration-test.ps1','package-release.ps1')
 if (Test-Path -LiteralPath (Join-Path $taskRoot 'LICENSE')) { $taskInputs += 'LICENSE' }
 if (Test-Path -LiteralPath $taskSourcesZip) { Remove-Item -LiteralPath $taskSourcesZip }
 $taskSourceArchive = [IO.Compression.ZipFile]::Open($taskSourcesZip,[IO.Compression.ZipArchiveMode]::Create)

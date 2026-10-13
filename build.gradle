@@ -1,0 +1,71 @@
+plugins {
+    id 'java'
+}
+
+group = 'ru.student'
+
+def pluginDescriptor = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        .newDocumentBuilder().parse(file('src/main/resources/META-INF/plugin.xml'))
+version = pluginDescriptor.documentElement.getElementsByTagName('version').item(0).textContent.trim()
+
+def localSettings = new Properties()
+def localSettingsFile = file('local.properties')
+if (localSettingsFile.isFile()) {
+    localSettingsFile.withInputStream { localSettings.load(it) }
+}
+def ideHome = file(findProperty('openideHome') ?:
+        localSettings.getProperty('openideHome', 'C:/Program Files/OpenIDE/OpenIDE'))
+if (!new File(ideHome, 'lib').isDirectory() || !new File(ideHome, 'plugins/java/lib').isDirectory()) {
+    throw new GradleException("OpenIDE SDK не найден: ${ideHome}. Укажите openideHome в local.properties.")
+}
+
+dependencies {
+    compileOnly fileTree(dir: new File(ideHome, 'lib'), include: '*.jar')
+    compileOnly fileTree(dir: new File(ideHome, 'plugins/java/lib'), include: '*.jar')
+    compileOnly fileTree(dir: new File(ideHome, 'plugins/java/lib/modules'), include: '*.jar')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('jar') {
+    archiveFileName = 'class-diagrams.jar'
+}
+
+tasks.register('buildPlugin', Zip) {
+    group = 'build'
+    description = 'Собрать установочный ZIP плагина OpenIDE'
+    archiveFileName = "class-diagrams-${project.version}-local.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    into('class-diagrams/lib') {
+        from(tasks.named('jar'))
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn tasks.named('buildPlugin')
+}
+
+['DiagramTests', 'ArrowTests'].each { testClass ->
+    tasks.register("run${testClass}", JavaExec) {
+        group = 'verification'
+        description = "Запустить ${testClass}"
+        dependsOn tasks.named('testClasses')
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = "ru.student.diagram.${testClass}"
+        systemProperty 'java.awt.headless', 'true'
+        systemProperty 'file.encoding', 'UTF-8'
+        args layout.buildDirectory.dir('verification').get().asFile.absolutePath
+    }
+}
+
+// The existing checks are executable main classes, not JUnit tests.
+tasks.named('test') {
+    enabled = false
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('runDiagramTests'), tasks.named('runArrowTests')
+}

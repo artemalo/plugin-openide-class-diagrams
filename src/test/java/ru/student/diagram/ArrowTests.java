@@ -102,6 +102,27 @@ public final class ArrowTests {
         Files.writeString(out.resolve("routing-performance.txt"),"30 scenes / 22 cards: "+(System.nanoTime()-started)/1_000_000+" ms\n");
         SwingUtilities.invokeAndWait(()->{
             try {
+                DiagramCanvas snapping=new DiagramCanvas();snapping.setSize(1200,800);
+                snapping.setModel(new DiagramModel(List.of(node("A"),node("B")),List.of(),List.of()));
+                snapping.zoomOut();
+                Rectangle2D a=snapping.nodeBounds("A"),b=snapping.nodeBounds("B");
+                Point start=snapping.toView(p(a.getX()+40,a.getY()+20));
+                int moveX=(int)Math.round((b.getX()-a.getX())*snapping.getZoom());
+                int moveY=(int)Math.round((b.getY()-a.getY())*snapping.getZoom());
+                mouse(snapping,MouseEvent.MOUSE_PRESSED,start,1,MouseEvent.BUTTON1,InputEvent.BUTTON1_DOWN_MASK);
+                Point near=new Point(start.x+moveX-5,start.y+moveY+5);
+                mouse(snapping,MouseEvent.MOUSE_DRAGGED,near,1,MouseEvent.NOBUTTON,
+                        InputEvent.BUTTON1_DOWN_MASK|InputEvent.SHIFT_DOWN_MASK);
+                Rectangle2D aligned=snapping.nodeBounds("A");
+                check(Math.abs(aligned.getX()-b.getX())<0.01&&Math.abs(aligned.getY()-b.getY())<0.01,
+                        "Shift drag aligns card edges on both axes after zoom");
+                Point free=new Point(start.x+moveX-30,start.y+moveY-30);
+                mouse(snapping,MouseEvent.MOUSE_DRAGGED,free,1,MouseEvent.NOBUTTON,InputEvent.BUTTON1_DOWN_MASK);
+                Rectangle2D unsnapped=snapping.nodeBounds("A");
+                check(Math.abs(unsnapped.getX()-(a.getX()+(free.x-start.x)/snapping.getZoom()))<0.01
+                        &&Math.abs(unsnapped.getY()-(a.getY()+(free.y-start.y)/snapping.getZoom()))<0.01,
+                        "releasing Shift during drag restores free movement without a jump");
+                mouse(snapping,MouseEvent.MOUSE_RELEASED,free,1,MouseEvent.BUTTON1,0);
                 var edge=new DiagramModel.Edge("A","B",DiagramModel.Relation.ASSOCIATION,"items");
                 var model=new DiagramModel(List.of(node("A"),node("B"),node("C")),List.of(edge),List.of());
                 DiagramCanvas canvas=new DiagramCanvas();canvas.setSize(1500,1000);canvas.setModel(model);

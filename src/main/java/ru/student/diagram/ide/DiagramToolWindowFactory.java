@@ -12,7 +12,7 @@ public final class DiagramToolWindowFactory implements ToolWindowFactory, DumbAw
     @Override public void createToolWindowContent(Project project, ToolWindow window) {
         JPanel panel = new JPanel(new BorderLayout());
         JLabel label = new JLabel("<html><h2>Диаграммы Java-классов</h2>Выделите классы или папку в Project.<br>"
-                + "Правая кнопка → Построить UML-диаграмму классов.<br><br>"
+                + "Выберите в контекстном меню пункт &quot;Построить UML-диаграмму классов&quot;.<br><br>"
                 + "Диаграмму можно открыть и из редактора через меню Tools.</html>", SwingConstants.CENTER);
         panel.add(label, BorderLayout.CENTER);
         window.getContentManager().addContent(ContentFactory.getInstance().createContent(panel, "Начало", false));
