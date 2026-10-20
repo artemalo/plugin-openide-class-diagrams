@@ -12,6 +12,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import org.jetbrains.concurrency.CancellablePromise;
 import ru.student.diagram.model.*;
 import ru.student.diagram.ui.DiagramCanvas;
+import ru.student.diagram.ui.DiagramViewState;
 import ru.student.diagram.ui.WrapLayout;
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -27,18 +28,26 @@ import java.util.concurrent.CancellationException;
 public final class DiagramPanel extends JPanel implements Disposable {
     private final Project project;
     private final PsiDiagramBuilder.Selection selection;
+    private final DiagramStateStore stateStore;
+    private final String stateKey;
     private final DiagramCanvas canvas = new DiagramCanvas();
     private final JLabel status = new JLabel("Анализ классов...");
     private final JCheckBox fields = new JCheckBox("Поля", true), methods = new JCheckBox("Методы", true),
             publicOnly = new JCheckBox("Только public"), related = new JCheckBox("Связанные классы"),
             dependencies = new JCheckBox("Зависимости", true);
+    private final JCheckBox theme = new JCheckBox("Тёмная");
+    private final Timer saveTimer;
     private CancellablePromise<DiagramModel> pending;
-    private boolean disposed, loading;
+    private boolean disposed, loading, loadedOnce;
     private int generation;
     private String warning = "";
 
     public DiagramPanel(Project project, PsiDiagramBuilder.Selection selection) {
         super(new BorderLayout()); this.project = project; this.selection = selection;
+        stateStore = project.getService(DiagramStateStore.class);
+        stateKey = DiagramStateStore.keyFor(selection);
+        saveTimer = new Timer(250, e -> saveState());
+        saveTimer.setRepeats(false);
         Color base = UIManager.getColor("Panel.background");
         canvas.setDark(base != null && base.getRed() + base.getGreen() + base.getBlue() < 390);
         JPanel top = new JPanel(); top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
@@ -52,7 +61,7 @@ public final class DiagramPanel extends JPanel implements Disposable {
         button(commands, "100%", "Исходный масштаб", canvas::actualSize);
         JButton export = new JButton("Экспорт ▾");
         export.addActionListener(e -> exportMenu(export)); commands.add(export);
-        JCheckBox theme = new JCheckBox("Тёмная", canvas.isDark());
+        theme.setSelected(canvas.isDark());
         theme.addActionListener(e -> canvas.setDark(theme.isSelected())); commands.add(theme);
         top.add(commands);
         JPanel filters = new JPanel(new WrapLayout(7, 2));
@@ -77,7 +86,10 @@ public final class DiagramPanel extends JPanel implements Disposable {
             @Override public void componentResized(java.awt.event.ComponentEvent e) { top.revalidate(); }
         });
         status.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10)); add(status, BorderLayout.SOUTH);
-        canvas.onChange(this::updateStatus);
+        canvas.onChange(() -> {
+            updateStatus();
+            if (loadedOnce && !loading && !disposed) saveTimer.restart();
+        });
         canvas.onNavigate((url, offset) -> {
             var file = VirtualFileManager.getInstance().findFileByUrl(url);
             if (file != null && !project.isDisposed()) new OpenFileDescriptor(project, file, offset).navigate(true);
@@ -97,8 +109,23 @@ public final class DiagramPanel extends JPanel implements Disposable {
                 .inSmartMode(project).expireWith(this).expireWith(project)
                 .finishOnUiThread(ModalityState.any(), model -> {
                     if (disposed || request != generation) return;
-                    loading = false; warning = String.join(" ", model.warnings());
-                    canvas.setModel(model); canvas.fit(); updateStatus();
+                    warning = String.join(" ", model.warnings());
+                    canvas.setModel(model);
+                    if (!loadedOnce) {
+                        DiagramViewState saved = stateStore.find(stateKey);
+                        if (saved == null) canvas.fit();
+                        else {
+                            canvas.restoreState(saved);
+                            fields.setSelected(canvas.showsFields());
+                            methods.setSelected(canvas.showsMethods());
+                            publicOnly.setSelected(canvas.isPublicOnly());
+                            related.setSelected(canvas.includesRelated());
+                            dependencies.setSelected(canvas.includesDependencies());
+                            theme.setSelected(canvas.isDark());
+                        }
+                        loadedOnce = true;
+                    }
+                    loading = false; updateStatus(); saveTimer.restart();
                     if (model.nodes().isEmpty()) status.setText("Java-классы не найдены. Выберите .java-файлы или папку исходников.");
                 }).submit(AppExecutorUtil.getAppExecutorService());
         pending.onError(error -> SwingUtilities.invokeLater(() -> {
@@ -113,6 +140,9 @@ public final class DiagramPanel extends JPanel implements Disposable {
         status.setText(model.nodes().size() + " классов, " + model.edges().size() + " связей, "
                 + Math.round(canvas.getZoom() * 100) + "%. " + canvas.interactionHint()
                 + (warning.isBlank() ? "" : " " + warning));
+    }
+    private void saveState() {
+        if (loadedOnce) stateStore.save(stateKey, canvas.snapshot());
     }
     private void exportMenu(JButton anchor) {
         JPopupMenu menu = new JPopupMenu();
@@ -152,6 +182,7 @@ public final class DiagramPanel extends JPanel implements Disposable {
         }.execute();
     }
     @Override public void dispose() {
+        saveTimer.stop(); saveState();
         disposed = true; generation++;
         if (pending != null) pending.cancel();
         ToolTipManager.sharedInstance().unregisterComponent(canvas);

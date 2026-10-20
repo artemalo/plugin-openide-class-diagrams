@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>ru.student.classdiagrams</id>
     <name>Class Diagrams for OpenIDE</name>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <vendor url="https://github.com/artemalo/plugin-openide-class-diagrams">artemalo</vendor>
     <description><![CDATA[
         Interactive UML class diagrams for selected Java classes and packages.
@@ -11,6 +11,8 @@
         Runs locally without Graphviz or web services.
     ]]></description>
     <change-notes><![CDATA[
+        1.2.0: Diagram positions, hidden classes, manual arrow routes, filters, theme
+        and viewport persist in project settings and restore after reopening the diagram.
         1.1.0: Orthogonal arrows automatically choose attachment sides and avoid class cards.
         Drag an arrow to add a waypoint; move endpoint handles to change attachment points.
         Double-click adds a waypoint. Delete removes it. R resets the selected route.
@@ -20,6 +22,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>
     <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="ru.student.diagram.ide.DiagramStateStore"/>
         <toolWindow id="Class Diagrams" anchor="right" icon="/icons/diagram.svg"
                     factoryClass="ru.student.diagram.ide.DiagramToolWindowFactory"
                     canCloseContents="true"/>

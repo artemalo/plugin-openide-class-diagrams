@@ -1,15 +1,19 @@
 package ru.student.diagram.probe;
 
 import com.intellij.openapi.application.*;
+import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.project.*;
 import com.intellij.openapi.project.ex.ProjectManagerEx;
 import com.intellij.ide.impl.OpenProjectTask;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
+import com.intellij.util.xmlb.XmlSerializer;
+import ru.student.diagram.ide.DiagramStateStore;
 import ru.student.diagram.ide.PsiDiagramBuilder;
 import ru.student.diagram.model.*;
 import ru.student.diagram.ui.DiagramCanvas;
+import ru.student.diagram.ui.DiagramViewState;
 import java.nio.file.*;
 import java.util.*;
 import javax.swing.SwingUtilities;
@@ -54,6 +58,52 @@ public final class ProbeStarter implements ApplicationStarter {
             AnActionEvent event = AnActionEvent.createFromDataContext("ProjectViewPopup", new Presentation(), context);
             ReadAction.run(() -> action.update(event));
             require(event.getPresentation().isEnabledAndVisible(),"action available for selected source folder");
+            DiagramStateStore store = project.getService(DiagramStateStore.class);
+            require(store != null,"project diagram state service registered");
+            String key = DiagramStateStore.keyFor(new PsiDiagramBuilder.Selection(List.of(root.getUrl()), null));
+            Path workspace = Path.of(args.get(1), ".idea", "workspace.xml");
+            if (Files.isRegularFile(workspace)
+                    && Files.readString(workspace).contains("ru.student.diagram.ide.DiagramStateStore")) {
+                DiagramViewState previous = store.find(key);
+                require(previous != null && !previous.showFields && previous.hasViewport
+                                && previous.positions.stream().anyMatch(p -> "fixture.Base".equals(p.id) && p.x == 120)
+                                && previous.edits.size() == 1,
+                        "diagram state loads after IDE restart");
+            }
+            DiagramViewState view = new DiagramViewState();
+            view.showFields = false; view.hasViewport = true; view.zoom = 0.75;
+            view.centerX = 410; view.centerY = 220;
+            DiagramViewState.CardPosition position = new DiagramViewState.CardPosition();
+            position.id = "fixture.Base"; position.x = 120; position.y = 75;
+            view.positions.add(position); view.hidden.add("fixture.Status");
+            DiagramViewState.EditedEdge edit = new DiagramViewState.EditedEdge();
+            edit.source = "fixture.OrderRepository"; edit.target = "fixture.Base";
+            edit.relation = DiagramModel.Relation.EXTENDS.name();
+            edit.start = new DiagramViewState.AnchorPosition();
+            edit.start.side = "TOP"; edit.start.fraction = 0.4;
+            DiagramViewState.Waypoint waypoint = new DiagramViewState.Waypoint();
+            waypoint.x = 250; waypoint.y = 130; edit.points.add(waypoint);
+            view.edits.add(edit);
+            store.save(key, view);
+            var xml = XmlSerializer.serialize(store.getState());
+            DiagramStateStore restored = new DiagramStateStore();
+            restored.loadState(XmlSerializer.deserialize(xml, DiagramStateStore.StoredState.class));
+            DiagramViewState roundTrip = restored.find(key);
+            require(roundTrip != null && !roundTrip.showFields && roundTrip.hasViewport
+                    && roundTrip.zoom == 0.75 && roundTrip.centerX == 410
+                    && roundTrip.positions.size() == 1 && roundTrip.positions.get(0).x == 120
+                    && roundTrip.hidden.equals(List.of("fixture.Status"))
+                    && roundTrip.edits.size() == 1 && roundTrip.edits.get(0).points.get(0).y == 130
+                    && "TOP".equals(roundTrip.edits.get(0).start.side),
+                    "project diagram state survives XML serialization");
+            require(project.isInitialized(), "fixture project initialized before saving settings");
+            ApplicationManagerEx.getApplicationEx().setSaveAllowed(true);
+            require(ApplicationManager.getApplication().isSaveAllowed(), "IDE allows saving settings in integration probe");
+            project.save();
+            for (int attempt = 0; attempt < 50 && !Files.isRegularFile(workspace); attempt++) Thread.sleep(100);
+            require(Files.isRegularFile(workspace)
+                    && Files.readString(workspace).contains("ru.student.diagram.ide.DiagramStateStore"),
+                    "diagram state is written to the project workspace file");
             var labRoot = root.findFileByRelativePath("ru/student/lab1");
             DiagramModel labModel = labRoot == null ? null : DumbService.getInstance(project).runReadActionInSmartMode(() ->
                     PsiDiagramBuilder.build(project, new PsiDiagramBuilder.Selection(List.of(labRoot.getUrl()), null)));
@@ -75,7 +125,7 @@ public final class ProbeStarter implements ApplicationStarter {
                     }
                 } catch(Exception error) {throw new RuntimeException(error);}
             });
-            Files.writeString(output.resolve("SUCCESS.txt"), "OpenIDE loaded the production plugin. PSI and menu registration: 12 checks passed.\n"
+            Files.writeString(output.resolve("SUCCESS.txt"), "OpenIDE loaded the production plugin. PSI, menu and diagram state checks passed.\n"
                     + (labModel == null ? "" : "Lab 1: 3 checks passed.\n") + summary);
             System.out.println("INTEGRATION SUCCESS");System.exit(0);
         } catch(Throwable error) {
