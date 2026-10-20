@@ -37,6 +37,8 @@ public final class DiagramCanvas extends JComponent {
     private boolean dark;
     private String selected, search = "";
     private double zoom = 1, panX = 0, panY = 0;
+    private Point2D.Double pendingCenter;
+    private boolean pendingFit;
     private Point lastMouse;
     private String dragging;
     private Point2D.Double dragOrigin;
@@ -53,6 +55,11 @@ public final class DiagramCanvas extends JComponent {
     public DiagramCanvas() {
         setOpaque(true); setFocusable(true); setPreferredSize(new Dimension(1050, 720));
         ToolTipManager.sharedInstance().registerComponent(this);
+        addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent e) {
+                if (pendingFit) fit(); else applyPendingCenter();
+            }
+        });
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mousePressed(MouseEvent e) {
                 requestFocusInWindow();
@@ -165,17 +172,118 @@ public final class DiagramCanvas extends JComponent {
     }
 
     public void setModel(DiagramModel model) {
-        original = model; edits.keySet().retainAll(model.edges()); rebuild(!hasManualArrangement);
+        original = model;
+        edits.keySet().retainAll(model.edges());
+        Set<String> ids = new HashSet<>();
+        model.nodes().forEach(node -> ids.add(node.id()));
+        hidden.retainAll(ids);
+        rebuild(!hasManualArrangement);
     }
     public DiagramModel visibleModel() { return visible; }
     public void onNavigate(BiConsumer<String, Integer> callback) { navigate = callback; }
     public void onChange(Runnable callback) { changed = callback; }
-    public void setDark(boolean value) { dark = value; repaint(); }
+    public void setDark(boolean value) { dark = value; repaint(); changed.run(); }
     public boolean isDark() { return dark; }
     public double getZoom() { return zoom; }
     public boolean showsFields() { return showFields; }
     public boolean showsMethods() { return showMethods; }
     public boolean isPublicOnly() { return publicOnly; }
+    public boolean includesRelated() { return related; }
+    public boolean includesDependencies() { return dependencies; }
+    public DiagramViewState snapshot() {
+        DiagramViewState state = new DiagramViewState();
+        for (var entry : positions.entrySet()) {
+            Rectangle2D.Double r = entry.getValue();
+            if (!Double.isFinite(r.x) || !Double.isFinite(r.y)) continue;
+            DiagramViewState.CardPosition position = new DiagramViewState.CardPosition();
+            position.id = entry.getKey(); position.x = r.x; position.y = r.y;
+            state.positions.add(position);
+        }
+        state.hidden.addAll(hidden.stream().sorted().toList());
+        for (DiagramModel.Edge edge : original.edges()) {
+            EdgeEdit edit = edits.get(edge);
+            if (edit == null) continue;
+            DiagramViewState.EditedEdge saved = new DiagramViewState.EditedEdge();
+            saved.source = edge.source(); saved.target = edge.target();
+            saved.relation = edge.relation().name(); saved.label = edge.label();
+            saved.start = saveAnchor(edit.start); saved.end = saveAnchor(edit.end);
+            for (Point2D.Double point : edit.points) {
+                DiagramViewState.Waypoint waypoint = new DiagramViewState.Waypoint();
+                waypoint.x = point.x; waypoint.y = point.y;
+                saved.points.add(waypoint);
+            }
+            state.edits.add(saved);
+        }
+        state.showFields = showFields; state.showMethods = showMethods;
+        state.publicOnly = publicOnly; state.related = related;
+        state.dependencies = dependencies; state.dark = dark;
+        state.zoom = zoom;
+        state.hasViewport = !pendingFit && (pendingCenter != null || getWidth() >= 50 && getHeight() >= 50);
+        Point2D center = pendingCenter == null ? world(new Point(getWidth() / 2, getHeight() / 2)) : pendingCenter;
+        state.centerX = center.getX(); state.centerY = center.getY();
+        return state;
+    }
+    public void restoreState(DiagramViewState state) {
+        if (state == null) return;
+        pendingCenter = null; pendingFit = false;
+        showFields = state.showFields; showMethods = state.showMethods;
+        publicOnly = state.publicOnly; related = state.related;
+        dependencies = state.dependencies; dark = state.dark;
+        Set<String> ids = new HashSet<>();
+        original.nodes().forEach(node -> ids.add(node.id()));
+        hidden.clear();
+        if (state.hidden != null) for (String id : state.hidden)
+            if (ids.contains(id)) hidden.add(id);
+        positions.clear();
+        if (state.positions != null) for (DiagramViewState.CardPosition saved : state.positions) {
+            if (saved == null || !ids.contains(saved.id)
+                    || !Double.isFinite(saved.x) || !Double.isFinite(saved.y)) continue;
+            positions.put(saved.id, new Rectangle2D.Double(saved.x, saved.y, 295, HEADER + 12));
+        }
+        edits.clear();
+        Set<DiagramModel.Edge> available = new HashSet<>(original.edges());
+        if (state.edits != null) for (DiagramViewState.EditedEdge saved : state.edits) {
+            if (saved == null) continue;
+            DiagramModel.Relation relation;
+            try { relation = DiagramModel.Relation.valueOf(saved.relation); }
+            catch (IllegalArgumentException | NullPointerException ignored) { continue; }
+            DiagramModel.Edge edge = new DiagramModel.Edge(saved.source, saved.target, relation, saved.label);
+            if (!available.contains(edge)) continue;
+            EdgeEdit edit = new EdgeEdit();
+            edit.start = restoreAnchor(saved.start); edit.end = restoreAnchor(saved.end);
+            if (saved.points != null) for (DiagramViewState.Waypoint point : saved.points)
+                if (point != null && Double.isFinite(point.x) && Double.isFinite(point.y))
+                    edit.points.add(new Point2D.Double(point.x, point.y));
+            if (edit.start != null || edit.end != null || !edit.points.isEmpty()) edits.put(edge, edit);
+        }
+        hasManualArrangement = !positions.isEmpty() || !hidden.isEmpty() || !edits.isEmpty();
+        rebuild(false);
+        if (state.hasViewport && Double.isFinite(state.zoom) && state.zoom > 0
+                && Double.isFinite(state.centerX) && Double.isFinite(state.centerY)) {
+            zoom = Math.max(0.12, Math.min(3.0, state.zoom));
+            pendingCenter = new Point2D.Double(state.centerX, state.centerY);
+            applyPendingCenter();
+        } else fit();
+        repaint(); changed.run();
+    }
+    private static DiagramViewState.AnchorPosition saveAnchor(EdgeRouter.Anchor anchor) {
+        if (anchor == null) return null;
+        DiagramViewState.AnchorPosition saved = new DiagramViewState.AnchorPosition();
+        saved.side = anchor.side().name(); saved.fraction = anchor.fraction();
+        return saved;
+    }
+    private static EdgeRouter.Anchor restoreAnchor(DiagramViewState.AnchorPosition saved) {
+        if (saved == null || !Double.isFinite(saved.fraction)) return null;
+        try { return new EdgeRouter.Anchor(EdgeRouter.Side.valueOf(saved.side), saved.fraction); }
+        catch (IllegalArgumentException | NullPointerException ignored) { return null; }
+    }
+    private void applyPendingCenter() {
+        if (pendingCenter == null || getWidth() < 50 || getHeight() < 50) return;
+        panX = getWidth() / 2.0 - pendingCenter.x * zoom;
+        panY = getHeight() / 2.0 - pendingCenter.y * zoom;
+        pendingCenter = null;
+        repaint(); changed.run();
+    }
     public void setOptions(boolean fields, boolean methods, boolean onlyPublic,
                            boolean includeRelated, boolean includeDependencies) {
         showFields = fields; showMethods = methods; publicOnly = onlyPublic;
@@ -222,11 +330,16 @@ public final class DiagramCanvas extends JComponent {
         if (layout) positions.clear();
         for (var entry : sizes.entrySet()) {
             var previous = positions.get(entry.getKey());
-            var size = entry.getValue();
-            var candidate = previous == null ? arranged.get(entry.getKey())
-                    : new Rectangle2D.Double(previous.x, previous.y, size.width, size.height);
-            if (previous == null && !layout) {
-                // A newly revealed neighbor must not land on a card that the user moved.
+            if (previous != null) {
+                var size = entry.getValue();
+                positions.put(entry.getKey(), new Rectangle2D.Double(previous.x, previous.y, size.width, size.height));
+            }
+        }
+        for (var entry : sizes.entrySet()) {
+            if (positions.containsKey(entry.getKey())) continue;
+            var candidate = arranged.get(entry.getKey());
+            if (!layout) {
+                // Place new nodes beside restored or manually moved cards.
                 while (positions.values().stream().anyMatch(candidate::intersects)) candidate.x += candidate.width + 90;
             }
             positions.put(entry.getKey(), candidate);
@@ -247,7 +360,8 @@ public final class DiagramCanvas extends JComponent {
 
     public void fit() {
         Rectangle2D b = diagramBounds();
-        if (getWidth() < 50 || getHeight() < 50) return;
+        if (getWidth() < 50 || getHeight() < 50) { pendingFit = true; return; }
+        pendingCenter = null; pendingFit = false;
         zoom = Math.max(0.12, Math.min(1.25, Math.min((getWidth() - 50) / b.getWidth(),
                 (getHeight() - 50) / b.getHeight())));
         panX = (getWidth() - b.getWidth() * zoom) / 2 - b.getX() * zoom;
@@ -255,6 +369,7 @@ public final class DiagramCanvas extends JComponent {
         repaint(); changed.run();
     }
     private void scale(double factor, Point anchor) {
+        pendingCenter = null; pendingFit = false;
         Point2D world = world(anchor);
         zoom = Math.max(0.12, Math.min(3.0, zoom * factor));
         panX = anchor.x - world.getX() * zoom; panY = anchor.y - world.getY() * zoom;

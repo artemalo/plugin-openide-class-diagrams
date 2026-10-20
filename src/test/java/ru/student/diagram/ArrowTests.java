@@ -180,6 +180,51 @@ public final class ArrowTests {
                 check(canvas.waypoints(edge).isEmpty()&&canvas.nodeBounds("A").equals(moved),"reset all arrows keeps class positions");
                 click(canvas,middle(canvas.edgePoints(edge)),2);canvas.layoutGraph();
                 check(canvas.waypoints(edge).isEmpty()&&!canvas.nodeBounds("A").equals(moved),"automatic layout resets manual routes together with cards");
+
+                DiagramCanvas originalView = new DiagramCanvas();originalView.setSize(1400,900);originalView.setModel(model);
+                Rectangle2D firstA = originalView.nodeBounds("A");
+                drag(originalView,p(firstA.getCenterX(),firstA.getY()+20),p(850,400));
+                click(originalView,middle(originalView.edgePoints(edge)),2);
+                Point2D.Double savedPin = originalView.waypoints(edge).get(0);
+                Point2D.Double endpoint = originalView.edgePoints(edge).get(0);
+                Rectangle2D movedA = originalView.nodeBounds("A");
+                drag(originalView,endpoint,p(movedA.getCenterX(),movedA.getY()));
+                Point2D.Double savedEndpoint = originalView.edgePoints(edge).get(0);
+                Rectangle2D firstC = originalView.nodeBounds("C");
+                click(originalView,p(firstC.getCenterX(),firstC.getY()+20),1);
+                originalView.getActionMap().get("remove").actionPerformed(null);
+                originalView.setOptions(false,true,true,false,true);
+                originalView.setDark(true);
+                originalView.zoomOut();
+                DiagramViewState saved = originalView.snapshot();
+                DiagramCanvas reopened = new DiagramCanvas();reopened.setSize(1400,900);reopened.setModel(model);
+                reopened.restoreState(saved);
+                check(reopened.nodeBounds("A").equals(originalView.nodeBounds("A"))
+                        &&reopened.waypoints(edge).size()==1&&reopened.waypoints(edge).get(0).equals(savedPin)
+                        &&reopened.edgePoints(edge).get(0).equals(savedEndpoint),
+                        "positions and manual arrow routes survive diagram reopening");
+                check(reopened.visibleModel().nodes().stream().noneMatch(n->n.id().equals("C"))
+                        &&!reopened.showsFields()&&reopened.showsMethods()&&reopened.isPublicOnly()
+                        &&reopened.isDark()
+                        &&Math.abs(reopened.getZoom()-originalView.getZoom())<0.0001,
+                        "hidden classes, filters and zoom survive diagram reopening");
+                DiagramCanvas deferred = new DiagramCanvas();deferred.setModel(model);deferred.restoreState(saved);
+                deferred.setSize(1400,900);
+                deferred.dispatchEvent(new ComponentEvent(deferred,ComponentEvent.COMPONENT_RESIZED));
+                Point center = deferred.toView(p(saved.centerX,saved.centerY));
+                check(Math.abs(center.x-700)<2&&Math.abs(center.y-450)<2,
+                        "saved viewport centers after the canvas receives its size");
+                var changedModel = new DiagramModel(List.of(node("A"),node("C"),node("D")),List.of(),List.of());
+                DiagramCanvas changed = new DiagramCanvas();changed.setSize(1400,900);changed.setModel(changedModel);
+                changed.restoreState(saved);
+                check(changed.nodeBounds("A").equals(originalView.nodeBounds("A"))
+                        &&changed.visibleModel().nodes().stream().noneMatch(n->n.id().equals("C"))
+                        &&changed.visibleModel().nodes().stream().anyMatch(n->n.id().equals("D"))
+                        &&!changed.nodeBounds("A").intersects(changed.nodeBounds("D")),
+                        "restoring a changed diagram skips old links and places new classes");
+                reopened.layoutGraph();
+                check(reopened.visibleModel().nodes().size()==3&&reopened.waypoints(edge).isEmpty(),
+                        "layout clears restored hidden classes and manual routes");
             }catch(Exception error){throw new RuntimeException(error);}
         });
         Files.writeString(out.resolve("arrow-test-results.txt"),checks+" arrow checks passed\n");
